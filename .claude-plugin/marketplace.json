@@ -4,6 +4,9 @@
     "name": "Drivepoint",
     "url": "https://drivepoint.io"
   },
+  "metadata": {
+    "description": "SmartModel Protocol v6.0 — AI grammar for Drivepoint Excel financial models"
+  },
   "plugins": [
     {
       "name": "smartmodel-protocol",
