@@ -1,10 +1,18 @@
 {
-  "version": "1.0.0",
-  "plugins": {
-    "smartmodel-protocol": {
-      "source": { "source": "github", "repo": "Bainbridge-Growth/drivepoint-smartmodel-plugin" },
-      "version": "1.0.0",
-      "description": "SmartModel Protocol v6.0 — AI grammar for Excel financial models"
+  "name": "drivepoint-smartmodel",
+  "owner": {
+    "name": "Drivepoint",
+    "url": "https://drivepoint.io"
+  },
+  "plugins": [
+    {
+      "name": "smartmodel-protocol",
+      "source": {
+        "source": "github",
+        "repo": "Bainbridge-Growth/drivepoint-smartmodel-plugin"
+      },
+      "description": "SmartModel Protocol v6.0 — AI grammar for Excel financial models",
+      "version": "1.0.0"
     }
-  }
+  ]
 }

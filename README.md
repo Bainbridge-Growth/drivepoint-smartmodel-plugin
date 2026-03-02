@@ -22,7 +22,7 @@ When installed, this plugin gives Claude the ability to:
 
 ```bash
 /plugin marketplace add Bainbridge-Growth/drivepoint-smartmodel-plugin
-/plugin install smartmodel-protocol
+/plugin install smartmodel-protocol@drivepoint-smartmodel
 ```
 
 ---
