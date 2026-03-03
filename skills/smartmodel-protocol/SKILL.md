@@ -15,7 +15,7 @@ allowed-tools: Read, Grep, Glob
 
 ## What is a SmartModel?
 
-A SmartModel is an Excel (.xlsx) file that is self-describing. It bundles machine-readable skill files and data import declarations inside its zip structure alongside the standard Excel sheets. When the Drivepoint add-in opens a SmartModel, it extracts these files and loads them into the agent context, enabling the agent to understand the model without being trained on it.
+A SmartModel is an Excel (.xlsx) workbook that follows a strict structural grammar — identifiers in column B, storage markers in column A, a date spine in row 2, and a Settings tab with model metadata. When the Drivepoint add-in opens a SmartModel (detected via `settings.smartmodelSpec = "6.0"` in the Settings tab), it reads each sheet's `metadata___template_id`, fetches the corresponding skills and import declarations from the Drivepoint API, and provides them to the AI agent as context.
 
 The agent's job is to help users understand their model, populate it with data, roll it forward in time, diagnose errors, and answer questions about the business metrics it represents.
 
@@ -23,18 +23,29 @@ The agent's job is to help users understand their model, populate it with data, 
 
 ## File Structure
 
-A SmartModel xlsx is a zip archive. Inside it, beyond the standard Excel content, there is a `smartmodel/` directory:
+A SmartModel xlsx is a standard Excel zip archive. The file's job is to be a well-structured workbook — skills and import declarations live on the server, fetched at runtime by the authenticated add-in.
 
-```
-[workbook].xlsx (zip)
-  └── smartmodel/
-        ├── skills/
-        │     └── [template]-skill.md      ← template-specific instructions
-        └── imports/
-              └── imports.yaml             ← data import declarations
-```
+**What's in the file:**
 
-The template skill file teaches the agent how to operate the specific template in this workbook. The imports.yaml tells the agent what external data sources the model expects and how to fulfill them.
+| Component | Purpose |
+|-----------|---------|
+| Settings tab | Model identity, protocol version, configuration |
+| Index tab | Template registry — lists all templates and their sheets |
+| Schedule sheets (yellow) | Primary financial modeling sheets |
+| Report sheets (blue) | Derived output reports |
+| R- sheets (default) | Data import layer — one per import declaration |
+| WebExtension | Embedded add-in reference (prompts install from AppSource) |
+
+**What's on the server** (fetched by the add-in via Drivepoint API):
+
+| Component | Purpose |
+|-----------|---------|
+| Protocol skill | Universal SmartModel grammar (this document) |
+| Template skills | Template-specific instructions (one per template) |
+| Import declarations | Data source definitions for each template's R- sheets |
+| AI context | Additional context the agent needs for the specific model |
+
+The WebExtension is the only custom content injected into the xlsx zip structure beyond standard Excel files. It references the Drivepoint add-in on Microsoft AppSource, enabling automatic add-in discovery when the workbook is opened.
 
 ---
 
@@ -56,7 +67,7 @@ Every SmartModel workbook uses a consistent tab color system:
 
 **Report tabs**: Derived outputs. Reference schedule sheets. Read-only for most users.
 
-**R- sheets** (prefix "R-"): Data import layer. One R- sheet per import declaration in imports.yaml. Populated by the add-in from connected data sources, or manually by the user. Template formula sheets reference R- sheets dynamically via Excel formulas. The agent does not need to declare wiring between templates — connections are discerned at runtime by reading the formula layer.
+**R- sheets** (prefix "R-"): Data import layer. One R- sheet per import declaration. Populated by the add-in from connected data sources, or manually by the user. Template formula sheets reference R- sheets dynamically via Excel formulas. The agent does not need to declare wiring between templates — connections are discerned at runtime by reading the formula layer.
 
 **Settings tab**: Machine-readable key-value configuration. Four columns: `id`, `setting`, `value`, `description`. Add-in owned, never user-edited directly.
 
@@ -81,10 +92,10 @@ Required settings fields:
 | `settings.currency` | Currency | Default `USD` |
 | `settings.author` | Author | Author name |
 | `settings.authorId` | Author ID | Author identifier |
-| `settings.skillFile` | Skill File Path | Path to template skill .md |
-| `settings.importsFile` | Imports File Path | Path to imports.yaml |
 
 Settings IDs use dot notation (`settings.fieldName`). These are distinct from the identifier system used inside schedule sheets, which uses triple-underscore notation (described below).
+
+`settings.smartmodelSpec = "6.0"` is the detection gate — the add-in checks this value to determine whether the workbook follows v6 protocol conventions.
 
 ---
 
@@ -123,7 +134,19 @@ Rows 10–15 contain additional metadata fields following the same pattern:
 - Column C: human-readable label in standard font
 - Column D: value in standard font
 
-Common metadata fields: `metadata___description`, `metadata___type`, `metadata___version`, `metadata___grain`, `metadata___created`, `metadata___framework`.
+Standard metadata fields:
+
+| Row | Identifier | Example Value |
+|-----|-----------|---------------|
+| 9 | `metadata___name` | `"13-Week Cash Flow"` |
+| 10 | `metadata___template_id` | `"13wk-cashflow"` |
+| 11 | `metadata___template_version` | `"1.0.0"` |
+| 12 | `metadata___description` | `"Weekly cash forecast..."` |
+| 13 | `metadata___grain` | `"weekly"` |
+
+`metadata___template_id` and `metadata___template_version` are how the add-in discovers which templates are present in the workbook. The add-in scans all sheets for `metadata___template_id` values, collects the unique IDs, and fetches the corresponding skills and import declarations from the server.
+
+Other common metadata fields: `metadata___type`, `metadata___created`, `metadata___framework`.
 
 **Column B rule**: Every cell in column B across the entire sheet uses monospace font (Menlo, size 10, black). This applies universally — metadata identifiers, settings identifiers, dimension identifiers, measure identifiers, data row identifiers. This is how you identify the machine-readable layer.
 
@@ -243,13 +266,15 @@ The agent must understand how formulas connect the sheet together:
 
 ## Imports System
 
-The `smartmodel/imports/imports.yaml` file bundled inside the xlsx zip declares what external data the model needs. Each import maps to one R- sheet.
+Import declarations define what external data each template needs. They are served by the Drivepoint API alongside template skills — not bundled in the xlsx file. The add-in fetches them when it discovers template IDs during workbook open.
+
+Each import declaration maps to one R- sheet. The declaration specifies the data source, field schema, time dimension, and query parameters.
 
 There are two fulfillment modes:
 - **Without a Drivepoint account**: The add-in fills R- sheets from locally connected raw sources using best-effort matching, or the user populates manually
 - **With a Drivepoint account**: The `dp_query` in each import declaration is executed directly against BigQuery with `{project_id}` and `{tenant_id}` injected at runtime
 
-The agent should consult imports.yaml to understand what data is available, which R- sheets are populated, and what the time dimension and field schema of each import is. See the imports.yaml schema documentation for the full field specification.
+The agent receives import declarations as part of the skill context provided by the add-in. It should consult them to understand what data is available, which R- sheets are populated, and what the time dimension and field schema of each import is.
 
 ---
 
@@ -263,8 +288,39 @@ When operating on a SmartModel, the agent should:
 4. **Never hardcode results**: Key Result cells must always use Excel formulas. If populating a Key Driver cell with data, write the value; if computing a Key Result, write the formula.
 5. **Respect column B identifiers**: Use these to address specific data rows unambiguously, especially when the user asks about a specific metric
 6. **Follow the time axis**: Row 2 is the authoritative date spine. Use it to locate the correct column for any given period
-7. **Read the template skill**: This protocol skill teaches universal grammar. The template-specific skill (bundled in `smartmodel/skills/`) teaches the semantics of the specific model — what each section means, how to roll it forward, common tasks, error handling
-8. **Do not infer connections between templates**: Formula wiring between sheets is discovered by reading Excel formulas at runtime, not declared in any configuration file
+7. **Read the template skill**: This protocol skill teaches universal grammar. Template-specific skills are loaded by the add-in from the server and passed to the agent as context. They teach the semantics of each specific template — what each section means, how to roll it forward, common tasks, error handling
+8. **Be multi-template aware**: A working model typically contains 5–8 templates stitched together. The agent receives all relevant template skills and a sheet map showing which sheet belongs to which template. Use the Index tab as the map.
+9. **Do not infer connections between templates**: Formula wiring between sheets is discovered by reading Excel formulas at runtime, not declared in any configuration file
+
+---
+
+## Multi-Template Workbooks
+
+A working SmartModel is typically 5–8 templates stitched together in a single workbook. Multi-template workbooks are first-class — each schedule sheet declares its template via `metadata___template_id` in its metadata block.
+
+**How it works:**
+
+1. Workbook opens → add-in reads Settings tab → `settings.smartmodelSpec = "6.0"` confirms v6
+2. Add-in scans all sheets for `metadata___template_id` values
+3. Collects unique template IDs (e.g., `["13wk-cashflow", "dtc-pnl", "marketing-optimizer"]`)
+4. Fetches skills and import declarations for all templates in one API call
+5. Updates the Index tab with the template registry
+6. Caches skills in memory, passes them to the AI agent on chat open
+
+Cross-template connections are standard Excel formulas — one schedule sheet referencing cells in another. The agent discovers these at runtime by reading the formula layer, not from any configuration file.
+
+---
+
+## Index Tab as Template Registry
+
+The Index tab is maintained by the add-in. On workbook open, the add-in scans all sheets for `metadata___template_id`, builds the template registry, and populates the Index tab with:
+
+- **Template ID** — the machine-readable identifier (e.g., `13wk-cashflow`)
+- **Template name** — human-readable name from `metadata___name`
+- **Version** — from `metadata___template_version`
+- **Owned sheets** — list of sheets belonging to this template
+
+This serves as the user-visible table of contents and the agent's map of the workbook. When the agent needs to understand what templates are present and where their sheets are, it reads the Index tab first.
 
 ---
 
