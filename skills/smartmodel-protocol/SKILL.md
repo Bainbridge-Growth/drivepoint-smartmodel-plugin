@@ -289,23 +289,23 @@ When operating on a SmartModel, the agent should:
 5. **Respect column B identifiers**: Use these to address specific data rows unambiguously, especially when the user asks about a specific metric
 6. **Follow the time axis**: Row 2 is the authoritative date spine. Use it to locate the correct column for any given period
 7. **Read the template skill**: This protocol skill teaches universal grammar. Template-specific skills are loaded by the add-in from the server and passed to the agent as context. They teach the semantics of each specific template — what each section means, how to roll it forward, common tasks, error handling
-8. **Be multi-template aware**: A working model typically contains 5–8 templates stitched together. The agent receives all relevant template skills and a sheet map showing which sheet belongs to which template. Use the Index tab as the map.
-9. **Do not infer connections between templates**: Formula wiring between sheets is discovered by reading Excel formulas at runtime, not declared in any configuration file
+8. **Read the Index tab manifest**: The Index tab contains the template registry — a structured table listing every template ID, version, owned sheets, skill file, and imports file. This is the agent's map of the workbook. Read it before navigating schedule sheets.
+9. **Be multi-template aware**: A working model typically contains 5–8 templates stitched together. The agent receives all relevant template skills and a sheet map showing which sheet belongs to which template.
+10. **Do not infer connections between templates**: Formula wiring between sheets is discovered by reading Excel formulas at runtime, not declared in any configuration file
 
 ---
 
 ## Multi-Template Workbooks
 
-A working SmartModel is typically 5–8 templates stitched together in a single workbook. Multi-template workbooks are first-class — each schedule sheet declares its template via `metadata___template_id` in its metadata block.
+A working SmartModel is typically 5–8 templates stitched together in a single workbook. Multi-template workbooks are first-class — each schedule sheet declares its template via `metadata___template_id` in its metadata block, and the Index tab provides a manifest of all templates for fast discovery.
 
 **How it works:**
 
 1. Workbook opens → add-in reads Settings tab → `settings.smartmodelSpec = "6.0"` confirms v6
-2. Add-in scans all sheets for `metadata___template_id` values
-3. Collects unique template IDs (e.g., `["13wk-cashflow", "dtc-pnl", "marketing-optimizer"]`)
+2. Add-in reads the Index tab template manifest (single table read — no sheet scanning)
+3. Extracts template IDs, versions, and skill/import file references
 4. Fetches skills and import declarations for all templates in one API call
-5. Updates the Index tab with the template registry
-6. Caches skills in memory, passes them to the AI agent on chat open
+5. Caches skills in memory, passes them to the AI agent on chat open
 
 Cross-template connections are standard Excel formulas — one schedule sheet referencing cells in another. The agent discovers these at runtime by reading the formula layer, not from any configuration file.
 
@@ -313,14 +313,38 @@ Cross-template connections are standard Excel formulas — one schedule sheet re
 
 ## Index Tab as Template Registry
 
-The Index tab is maintained by the add-in. On workbook open, the add-in scans all sheets for `metadata___template_id`, builds the template registry, and populates the Index tab with:
+The Index tab contains a structured template manifest — a machine-readable table that lists every template in the workbook. This is the **primary discovery mechanism** for both the add-in and the AI agent.
 
-- **Template ID** — the machine-readable identifier (e.g., `13wk-cashflow`)
-- **Template name** — human-readable name from `metadata___name`
-- **Version** — from `metadata___template_version`
-- **Owned sheets** — list of sheets belonging to this template
+### Manifest Table Structure
 
-This serves as the user-visible table of contents and the agent's map of the workbook. When the agent needs to understand what templates are present and where their sheets are, it reads the Index tab first.
+The manifest is a table in the Index tab with the following columns:
+
+| Column | Header | Content |
+|--------|--------|---------|
+| A | Template ID | Machine-readable identifier (e.g., `dtc-revenue`) |
+| B | Version | Semver (e.g., `1.0.0`) |
+| C | Sheets | Comma-separated list of owned sheet names |
+| D | Skill File | Filename of the template skill (e.g., `dtc-revenue-skill.md`) |
+| E | Imports File | Filename of the import declarations (e.g., `dtc-revenue-imports.yaml`) |
+
+Example:
+
+```
+Template ID          Version  Sheets                                    Skill File                   Imports File
+dtc-revenue          1.0.0    DTC, DTC - OTP, DTC - SUB, DTC - Acq     dtc-revenue-skill.md         dtc-revenue-imports.yaml
+amzn-revenue         1.0.0    AMZN, AMZN - OTP, AMZN - SUB             amzn-revenue-skill.md        amzn-revenue-imports.yaml
+wholesale-revenue    1.0.0    Wholesale                                 wholesale-revenue-skill.md   wholesale-revenue-imports.yaml
+opex                 1.0.0    Opex                                      opex-skill.md                opex-imports.yaml
+consolidation        1.0.0    M - Monthly                               consolidation-skill.md       consolidation-imports.yaml
+```
+
+### How it's used
+
+- **Add-in**: Reads the manifest on workbook open. Extracts template IDs, versions, and file references. Sends one API request to fetch all skills and imports. No sheet scanning required.
+- **AI agent**: Reads the manifest to understand what templates are present, which sheets belong to which template, and what skills are available. This is the agent's map of the workbook.
+- **Maintenance**: The add-in updates the manifest when templates are added or removed. The manifest is the source of truth for what's in the workbook.
+
+Each schedule sheet still declares `metadata___template_id` in its metadata block — this is the per-sheet identity that the agent uses when working on a specific sheet. The Index tab manifest is the workbook-level registry for discovery and fetching.
 
 ---
 
